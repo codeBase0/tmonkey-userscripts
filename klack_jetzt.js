@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name     Klack Enhance "Jetzt im TV & similar"
 // @namespace   http://www.klack.de
-// @version  1
+// @version  1.1
+// @description Refactoring in progress
 // @require     http://code.jquery.com/jquery-1.9.1.js
 // @require     http://code.jquery.com/ui/1.10.3/jquery-ui.js
 // @include     https://www.klack.de/*
@@ -19,6 +20,38 @@ $(function() {
 	var currentDate = new Date();
 	var currentHour = currentDate.getHours();
 	var currentMinute = currentDate.getMinutes();
+
+	function addCss(rules) {
+		var styleEl = document.createElement('style');
+
+		// Append <style> element to <head>
+		document.head.appendChild(styleEl);
+
+		var cssStr = '';
+
+		for (var i = 0; i < rules.length; i++) {
+			var j = 1,
+				rule = rules[i],
+				selector = rule[0],
+				propStr = '';
+
+			// If the second argument of a rule is an array of arrays, correct our variables.
+			if (Array.isArray(rule[1][0])) {
+				rule = rule[1];
+				j = 0;
+			}
+
+			for (var pl = rule.length; j < pl; j++) {
+				var prop = rule[j];
+				propStr += prop[0] + ': ' + prop[1] + (prop[2] ? ' !important' : '') + ';\n';
+			}
+
+			// Insert CSS Rule
+			cssStr += selector + '{' + propStr + '}\n';
+		}
+
+		styleEl.innerHTML = cssStr;
+	}
 
 	function getTimeshiftUrl(hours) {
 		// returns a modified location string, with params set to timeshift
@@ -101,42 +134,68 @@ $(function() {
 		});
 	}
 
-	function getDurationBar(fractionViewed, duration, timeSinceStart) {
-		var $durationInfo = $("<div />").css({
-			marginBottom: "1em"
-		});
+	function getDurationInfo(fractionViewed, duration, timeSinceStart) {
+		var $durationInfo = $("<div />").addClass("durationInfo");
 
-		var $durationBarWrp = $('<div />').css({
-			background: "red 0 0 no-repeat",
-			border: "1px solid #555"
-		}).append($("<div />").css({
-			background: "lime 0 0 no-repeat",
-			height: "5px",
-			width: fractionViewed * 100 + "%"
-		}));
+		var percentageStr = Math.round(fractionViewed * 10000)/100 + '%';
+
+		var $durationBar = $('<div class="durationBar" />')
+			.append($("<div />").attr("data-width", percentageStr));
 
 		var tStr = (duration - timeSinceStart);
 
 		return $durationInfo
-			.append($durationBarWrp)
-			.append('<div>Seit ' + timeSinceStart + ' / ' + duration + ' Minuten | Noch '  + tStr + ' </div>')
+			.append($durationBar)
+			.append('<div class="durationDetails"><p><b>' + percentageStr + ' gelaufen</b></p><p>' + timeSinceStart + ' / ' + duration + ' Minuten</p><p>Noch '  + tStr + '</p></div>')
 	}
 
-	function paintCell($cell, fractionViewed, duration, timeSinceStart) {
-		var $durationInfo = getDurationBar(fractionViewed, duration, timeSinceStart);
+	var SHOW_DURATION_INFO = true;
 
-		$cell.prepend($durationInfo);
-	}
-
-	var stationList = $("table.broadcasts tbody");
-	var $stationDisplay = $("#selectstationSelect .selectValue .value");
+	addCss([
+		['.durationInfo ', [
+			['position', 'relative'],
+			['margin-bottom', '1em'],
+			['display', 'none']
+		]],
+		['html.durationInfo-enhancement-visible .durationInfo ', [
+			['display', 'block']
+		]],
+		['.durationInfo .durationBar ', [
+			['background', 'red 0 0 no-repeat'],
+			['border', '1px solid #555']
+		]],
+		['.durationInfo .durationBar > div', [
+			['background', 'lime 0 0 no-repeat'],
+			['height', '5px'],
+			['padding', '2px 0'],
+			['width', "attr(data-width)"]
+		]],
+		['.durationInfo .durationDetails ', [
+			['display', 'none'],
+			['position', 'absolute'],
+			['width', '100%'],
+			['top', '-8px'],
+			['left', '0'],
+			['padding', '5px 3px'],
+			['background', 'rgba(222,222,222,0.7)'],
+			['border', '2px solid grey'],
+			['border-radius', '4px']
+		]],
+		['.durationInfo:hover .durationDetails,\r\n' +
+		 '.durationInfo .durationDetails:hover ', [
+			['display', 'block', true]
+		]]
+	]);
 
 	$(document).ready(function(e) {
+		var stationList = $("table.broadcasts tbody");
+		var $stationDisplay = $("#selectstationSelect .selectValue .value");
 		var stations = stationList.children(".evenRow, .oddRow");
 		$stationDisplay.html(function(i, oldVal) {
 			return oldVal + ' <b>(' + stations.length + ')</b>';
 		});
-});
+		$('html').toggleClass('durationInfo-enhancement-visible', SHOW_DURATION_INFO);
+	});
 
 	( $("#componentHeader .time").text() ).replace(/(\d+)\.(\d+)\.(\d+),\s*(\d+):(\d+)\s*Uhr/i, function(match, d, m, y, h, minutes) {
 		console.log("parsed serverNow: d: %o, m: %o, y: %o, all: %o", d, m, y, match, new Date(y, m-1, d, h, minutes));
@@ -171,20 +230,23 @@ $(function() {
 			// datumswechsel
 			timeSinceStart += 24 * 60;
 		}
-		if (DBG === true) {
-			$dCells.eq(i).prepend('<div>timeSinceStart: ' + timeSinceStart + ' Min<br /></div>');
-		}
 		if (timeSinceStart > 0) {
 			fractionViewed = getRatio(timeSinceStart, duration);
 			fractionViewedDisplayValue = (fractionViewed * 100) + '%';
-			paintCell($dCells.eq(i), fractionViewed, duration, timeSinceStart);
-			$dCells.eq(i).prepend('<div>' + fractionViewedDisplayValue + ' bereits gelaufen<br />timeSinceStart: ' + timeSinceStart + 'min <br /></div>');
+
+			$dCells.eq(i).prepend(getDurationInfo(fractionViewed, duration, timeSinceStart));
 		} else {
-			// negative delta t means  time is in the future
-			if (DBG === true) {
+			$dCells.eq(i).prepend('<b>noch nicht gestartet</b><br />');
+		}
+		if (DBG === true) {
+			// $dCells.eq(i).prepend('<div>timeSinceStart: ' + timeSinceStart + ' Min<br /></div>');
+			if (timeSinceStart > 0) {
+				$dCells.eq(i).prepend('<div>Gestartet vor: ' + timeSinceStart + ' min<br />  Laufzeit: ' + duration + ' min<br /> </div>');
+				$dCells.eq(i).prepend('<div>' + fractionViewedDisplayValue + ' bereits gelaufen<br />timeSinceStart: ' + timeSinceStart + 'min <br /></div>');
+			} else {
+				// negative delta t means  time is in the future
 				$dCells.eq(i).prepend('<b>noch nicht gestartet</b><br />');
 			}
-						$dCells.eq(i).prepend('<div>Gstartet vor: ' + timeSinceStart + ' min<br />  Laufzeit: ' + duration + ' min<br /> </div>');
 		}
 
 	});
